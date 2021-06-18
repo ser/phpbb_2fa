@@ -1,0 +1,42 @@
+{% include 'overall_header.html' %}
+
+{% INCLUDEJS '@paul999_tfa/js/login.js' %}
+
+<div class="col-12 col-lg-10 offset-lg-1 mb-3">
+	<div class="card">
+		<div class="card-header">
+			{{ lang('TFA_CP_TXT') }}
+		</div>
+		<div class="card-body">
+		{% if S_ERROR %}
+    		<div class="alert alert-danger">{{ S_ERROR }}</div>
+		{% endif %}
+		<div class="row">
+			<div class="col-12 col-md-6">
+	            		<h2>{{ lang('TFA_SELECT_KEY') }}</h2>
+        	    		<ul class="list-group">
+            			{% for tfa_option in tfa_options %}
+                			<li class="list-group-item">
+                        			<a href="javascript:openAuth('#auth_{{ tfa_option.ID|e('js') }}');">{{ tfa_option.NAME }}</a></dt>
+           		     		</li>
+          	  		{% endfor %}
+            			</ul>
+			</div>
+			<div class="col-12 col-md-6">
+				{% for tfa_option in tfa_options if tfa_option.S_TFA_INCLUDE_HTML %}
+    				<div id="auth_{{ tfa_option.ID }}"{% if not tfa_option.S_FIRST_ROW %} style="display: none;"{% endif %}>
+        				<form id="submit_auth" method="post" action="{{ tfa_option.U_SUBMIT_AUTH }}">
+            					{{ S_FORM_TOKEN }}
+            					{{ tfa_option.S_HIDDEN_FIELDS }}
+            					<input type="hidden" name="random" value="{{ RANDOM }}">
+            					<input type="hidden" name="redirect" value="{{ REDIRECT }}">
+            					{% include tfa_option.S_TFA_INCLUDE_HTML %}
+        				</form>
+    				</div>
+				{% endfor %}
+			</div>
+		</div>
+	</div>
+</div>
+
+{% include 'overall_footer.html' %}

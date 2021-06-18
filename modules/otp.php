@@ -1,4 +1,537 @@
 <?php
+
+declare(strict_types=1);
+
+namespace Base32;
+
+/**
+ * Base32 encoder and decoder.
+ *
+ * RFC 4648 compliant
+ *
+ * @see     http://www.ietf.org/rfc/rfc4648.txt
+ * Some groundwork based on this class
+ * https://github.com/NTICompass/PHP-Base32
+ *
+ * @author  Christian Riesen <chris.riesen@gmail.com>
+ * @author  Sam Williams <sam@badcow.co>
+ *
+ * @see     http://christianriesen.com
+ *
+ * @license MIT License see LICENSE file
+ */
+class Base32
+{
+    /**
+     * Alphabet for encoding and decoding base32.
+     *
+     * @var string
+     */
+    protected const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=';
+
+    protected const BASE32HEX_PATTERN = '/[^A-Z2-7]/';
+
+    /**
+     * Maps the Base32 character to its corresponding bit value.
+     */
+    protected const MAPPING = [
+        '=' => 0b00000,
+        'A' => 0b00000,
+        'B' => 0b00001,
+        'C' => 0b00010,
+        'D' => 0b00011,
+        'E' => 0b00100,
+        'F' => 0b00101,
+        'G' => 0b00110,
+        'H' => 0b00111,
+        'I' => 0b01000,
+        'J' => 0b01001,
+        'K' => 0b01010,
+        'L' => 0b01011,
+        'M' => 0b01100,
+        'N' => 0b01101,
+        'O' => 0b01110,
+        'P' => 0b01111,
+        'Q' => 0b10000,
+        'R' => 0b10001,
+        'S' => 0b10010,
+        'T' => 0b10011,
+        'U' => 0b10100,
+        'V' => 0b10101,
+        'W' => 0b10110,
+        'X' => 0b10111,
+        'Y' => 0b11000,
+        'Z' => 0b11001,
+        '2' => 0b11010,
+        '3' => 0b11011,
+        '4' => 0b11100,
+        '5' => 0b11101,
+        '6' => 0b11110,
+        '7' => 0b11111,
+    ];
+
+    /**
+     * Encodes into base32.
+     *
+     * @param string $string Clear text string
+     *
+     * @return string Base32 encoded string
+     */
+    public static function encode(string $string): string
+    {
+        // Empty string results in empty string
+        if ('' === $string) {
+            return '';
+        }
+
+        $encoded = '';
+
+        //Set the initial values
+        $n = $bitLen = $val = 0;
+        $len = \strlen($string);
+
+        //Pad the end of the string - this ensures that there are enough zeros
+        $string .= \str_repeat(\chr(0), 4);
+
+        //Explode string into integers
+        $chars = (array) \unpack('C*', $string, 0);
+
+        while ($n < $len || 0 !== $bitLen) {
+            //If the bit length has fallen below 5, shift left 8 and add the next character.
+            if ($bitLen < 5) {
+                $val = $val << 8;
+                $bitLen += 8;
+                $n++;
+                $val += $chars[$n];
+            }
+            $shift = $bitLen - 5;
+            $encoded .= ($n - (int)($bitLen > 8) > $len && 0 == $val) ? '=' : static::ALPHABET[$val >> $shift];
+            $val = $val & ((1 << $shift) - 1);
+            $bitLen -= 5;
+        }
+
+        return $encoded;
+    }
+
+    /**
+     * Decodes base32.
+     *
+     * @param string $base32String Base32 encoded string
+     *
+     * @return string Clear text string
+     */
+    public static function decode(string $base32String): string
+    {
+        // Only work in upper cases
+        $base32String = \strtoupper($base32String);
+
+        // Remove anything that is not base32 alphabet
+        $base32String = \preg_replace(static::BASE32HEX_PATTERN, '', $base32String);
+
+        // Empty string results in empty string
+        if ('' === $base32String || null === $base32String) {
+            return '';
+        }
+
+        $decoded = '';
+
+        //Set the initial values
+        $len = \strlen($base32String);
+        $n = 0;
+        $bitLen = 5;
+        $val = static::MAPPING[$base32String[0]];
+
+        while ($n < $len) {
+            //If the bit length has fallen below 8, shift left 5 and add the next pentet.
+            if ($bitLen < 8) {
+                $val = $val << 5;
+                $bitLen += 5;
+                $n++;
+                $pentet = $base32String[$n] ?? '=';
+
+                //If the new pentet is padding, make this the last iteration.
+                if ('=' === $pentet) {
+                    $n = $len;
+                }
+                $val += static::MAPPING[$pentet];
+                continue;
+            }
+            $shift = $bitLen - 8;
+
+            $decoded .= \chr($val >> $shift);
+            $val = $val & ((1 << $shift) - 1);
+            $bitLen -= 8;
+        }
+
+        return $decoded;
+    }
+}
+/**
+ * OTPAuthenticate
+ * @package OTPAuthenticate
+ * @copyright (c) Marc Alexander <admin@m-a-styles.de>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace OTPAuthenticate;
+
+use Base32\Base32;
+
+class OTPAuthenticate
+{
+	/** int verification code modulus */
+	const VERIFICATION_CODE_MODULUS = 1e6;
+
+	/** int Secret length */
+	protected $secret_length;
+
+	/** int code length */
+	protected $code_length;
+
+	/** \Base32\Base32 */
+	protected $base32;
+
+	/**
+	 * Constructor for OTPAuthenticate
+	 *
+	 * @param int $code_length Code length
+	 * @param int $secret_length Secret length
+	 */
+	public function __construct($code_length = 6, $secret_length = 10)
+	{
+		$this->code_length = $code_length;
+		$this->secret_length = $secret_length;
+
+		$this->base32 = new Base32();
+	}
+
+	/**
+	 * Generates code based on timestamp and secret
+	 *
+	 * @param string $secret Secret shared with user
+	 * @param int $counter Counter for code generation
+	 * @param string $algorithm Algorithm to use for HMAC hash.
+	 *			Defaults to sha512. The following hash types are allowed:
+	 *				TOTP: sha1, sha256, sha512
+	 *				HOTP: sha1
+	 *
+	 * @return string Generated OTP code
+	 */
+	public function generateCode($secret, $counter, $algorithm = 'sha512')
+	{
+		$key = $this->base32->decode($secret);
+
+		if (empty($counter))
+		{
+			return '';
+		}
+
+		$hash = hash_hmac($algorithm, $this->getBinaryCounter($counter), $key, true);
+
+		return str_pad(strval($this->truncate($hash)), $this->code_length, '0', STR_PAD_LEFT);
+	}
+
+	/**
+	 * Check if supplied TOTP code is valid
+	 *
+	 * @param string $secret Secret to use for comparison
+	 * @param int $code Supplied TOTP code
+	 * @param string $hash_type Hash type
+	 *
+	 * @return bool True if code is valid, false if not
+	 */
+	public function checkTOTP($secret, $code, $hash_type = 'sha512')
+	{
+		$time = $this->getTimestampCounter(time());
+
+		for ($i = -1; $i <= 1; $i++)
+		{
+			if (hash_equals($code, $this->generateCode($secret, $time + $i, $hash_type)) === true)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Check if supplied HOTP code is valid
+	 *
+	 * @param string $secret Secret to use for comparison
+	 * @param int $counter Current counter
+	 * @param int $code Supplied HOTP code
+	 * @param string $hash_type Hash type
+	 *
+	 * @return bool True if code is valid, false if not
+	 */
+	public function checkHOTP($secret, $counter, $code, $hash_type = 'sha512')
+	{
+		return hash_equals($code, $this->generateCode($secret, $counter, $hash_type));
+	}
+
+	/**
+	 * Truncate HMAC hash to binary for generating a TOTP code
+	 *
+	 * @param string $hash HMAC hash
+	 *
+	 * @return int Truncated binary hash
+	 */
+	protected function truncate($hash)
+	{
+		$truncated_hash = 0;
+		$offset = ord(substr($hash, -1)) & 0xF;
+
+		// Truncate hash using supplied sha1 hash
+		for ($i = 0; $i < 4; ++$i)
+		{
+			$truncated_hash <<= 8;
+			$truncated_hash  |= ord($hash[$offset + $i]);
+		}
+
+		// Truncate to a smaller number of digits.
+		$truncated_hash &= 0x7FFFFFFF;
+		$truncated_hash %= self::VERIFICATION_CODE_MODULUS;
+
+		return $truncated_hash;
+	}
+
+	/**
+	 * Get binary version of time counter
+	 *
+	 * @param int $counter Timestamp or counter
+	 *
+	 * @return string Binary time counter
+	 */
+	protected function getBinaryCounter($counter)
+	{
+		return pack('N*', 0) . pack('N*', $counter);
+	}
+
+	/**
+	 * Get counter from timestamp
+	 *
+	 * @param int $time Timestamp
+	 *
+	 * @return int Counter
+	 */
+	public function getTimestampCounter($time)
+	{
+		return floor($time / 30);
+	}
+
+	/**
+	 * Generate secret with specified length
+	 *
+	 * @param int $length
+	 *
+	 * @return string
+	 */
+	public function generateSecret($length = 10)
+	{
+		$strong_secret = false;
+
+		// Try to get $crypto_strong to evaluate to true. Give it 5 tries.
+		for ($i = 0; $i < 5; $i++)
+		{
+			$secret = openssl_random_pseudo_bytes($length, $strong_secret);
+
+			if ($strong_secret === true)
+			{
+				return $this->base32->encode($secret);
+			}
+		}
+
+		return '';
+	}
+}
+
+/**
+ * OTPHelper
+ * @package OTPAuthenticate
+ * @copyright (c) Marc Alexander <admin@m-a-styles.de>
+ *
+ * For the full copyright and license information, please view the LICENSE
+ * file that was distributed with this source code.
+ */
+
+namespace OTPAuthenticate;
+
+class OTPHelper
+{
+	/** @var array Allowed types of OTP */
+	protected $allowedType = array(
+		'hotp',
+		'totp',
+	);
+
+	/** @var array Allowed algorithms */
+	protected $allowedAlgorithm = array(
+		'sha1',
+		'sha256',
+		'sha512',
+	);
+
+	/** @var string Label string for URI */
+	protected $label;
+
+	/** @var string Issuer string for URI */
+	protected $issuer;
+
+	/** @var string Additional parameters for URI */
+	protected $parameters = '';
+
+	/**
+	 * Generate OTP key URI
+	 *
+	 * @param string $type OTP type
+	 * @param string $secret Base32 encoded secret
+	 * @param string $account Account name
+	 * @param string $issuer Issuer name (optional)
+	 * @param int $counter Counter for HOTP (optional)
+	 * @param string $algorithm Algorithm name (optional)
+	 * @param string $digits Number of digits for code (optional)
+	 * @param string $period Period for TOTP codes (optional)
+	 *
+	 * @return string OTP key URI
+	 */
+	public function generateKeyURI($type, $secret, $account, $issuer = '', $counter = 0, $algorithm = '', $digits = '', $period = '')
+	{
+		// Check if type is supported
+		$this->validateType($type);
+		$this->validateAlgorithm($algorithm);
+
+		// Format label string
+		$this->formatLabel($issuer, 'issuer');
+		$this->formatLabel($account, 'account');
+
+		// Set additional parameters
+		$this->setCounter($type, $counter);
+		$this->setParameter($algorithm, 'algorithm');
+		$this->setParameter($digits, 'digits');
+		$this->setParameter($period, 'period');
+
+		return 'otpauth://' . $type . '/' . $this->label . '?secret=' . $secret . $this->issuer . $this->parameters;
+	}
+
+	/**
+	 * Check if OTP type is supported
+	 *
+	 * @param string $type OTP type
+	 *
+	 * @throws \InvalidArgumentException When type is not supported
+	 */
+	protected function validateType($type)
+	{
+		if (empty($type) || !in_array($type, $this->allowedType))
+		{
+			throw new \InvalidArgumentException("The OTP type $type is not supported");
+		}
+	}
+
+	/**
+	 * Check if algorithm is supported
+	 *
+	 * @param string $algorithm Algorithm to use
+	 *
+	 * @throws \InvalidArgumentException When algorithm is not supported
+	 */
+	protected function validateAlgorithm($algorithm)
+	{
+		if (!empty($algorithm) && !in_array($algorithm, $this->allowedAlgorithm))
+		{
+			throw new \InvalidArgumentException("The algorithm $algorithm is not supported");
+		}
+	}
+
+	/**
+	 * Format label string according to expected urlencoded standards.
+	 *
+	 * @param string $string The label string
+	 * @param string $part Part of label
+	 */
+	protected function formatLabel($string, $part)
+	{
+		$string = trim($string);
+
+		if ($part === 'account')
+		{
+			$this->setAccount($string);
+		}
+		else if ($part === 'issuer')
+		{
+			$this->setIssuer($string);
+		}
+	}
+
+	/**
+	 * Format and and set account name
+	 *
+	 * @param string $account Account name
+	 *
+	 * @throws \InvalidArgumentException When given account name is an empty string
+	 */
+	protected function setAccount($account)
+	{
+		if (empty($account))
+		{
+			throw new \InvalidArgumentException("Label can't contain empty strings");
+		}
+
+		$this->label .= str_replace('%40', '@', rawurlencode($account));
+	}
+
+	/**
+	 * Format and set issuer
+	 *
+	 * @param string $issuer Issuer name
+	 */
+	protected function setIssuer($issuer)
+	{
+		if (!empty($issuer))
+		{
+			$this->label = rawurlencode($issuer) . ':';
+			$this->issuer = '&issuer=' . rawurlencode($issuer);
+		}
+	}
+
+	/**
+	 * Set parameter if it is defined
+	 *
+	 * @param string $data Data to set
+	 * @param string $name Name of data
+	 */
+	protected function setParameter($data, $name)
+	{
+		if (!empty($data))
+		{
+			$this->parameters .= "&$name=" . rawurlencode($data);
+		}
+	}
+
+	/**
+	 * Set counter value if hotp is being used
+	 *
+	 * @param string $type Type of OTP auth, either HOTP or TOTP
+	 * @param int $counter Counter value
+	 *
+	 * @throws \InvalidArgumentException If counter is empty while using HOTP
+	 */
+	protected function setCounter($type, $counter)
+	{
+		if ($type === 'hotp')
+		{
+			if ($counter !== 0 && empty($counter))
+			{
+				throw new \InvalidArgumentException("Counter can't be empty if HOTP is being used");
+			}
+
+			$this->parameters .= "&counter=$counter";
+		}
+	}
+}
 /**
  *
  * 2FA extension for the phpBB Forum Software package.
